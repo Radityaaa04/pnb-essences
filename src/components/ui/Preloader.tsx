@@ -40,6 +40,17 @@ export default function Preloader() {
         enter();
       },
     });
+
+    // BUG-04 FIX: Fallback — if the tab is in the background when the GSAP
+    // animation runs, onComplete may never fire. Force enter() after a safe
+    // timeout (animation duration + generous buffer).
+    const ANIMATION_DURATION_MS = 1500;
+    const BUFFER_MS = 500;
+    setTimeout(() => {
+      if (!useStore.getState().isEntered) {
+        enter();
+      }
+    }, ANIMATION_DURATION_MS + BUFFER_MS);
   };
 
   if (isEntered) return null;

@@ -8,9 +8,12 @@ interface ParallaxProps {
   children: React.ReactNode;
   speed?: number; // 1 = normal, > 1 = faster, < 1 = slower
   className?: string;
+  // BUG-05 FIX: overflow is now configurable — default 'visible' prevents
+  // large text from being clipped during parallax scroll movement.
+  overflow?: "hidden" | "clip" | "visible";
 }
 
-export default function Parallax({ children, speed = 0.5, className = "" }: ParallaxProps) {
+export default function Parallax({ children, speed = 0.5, className = "", overflow = "visible" }: ParallaxProps) {
   const triggerRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
 
@@ -48,7 +51,7 @@ export default function Parallax({ children, speed = 0.5, className = "" }: Para
   }, [speed]);
 
   return (
-    <div ref={triggerRef} className={`overflow-hidden ${className}`}>
+    <div ref={triggerRef} className={className} style={{ overflow }}>
       <div ref={targetRef} className="will-change-transform h-full w-full">
         {children}
       </div>

@@ -39,8 +39,9 @@ class AudioManager {
   }
 
   public playHover() {
-    if (!this.ctx) return;
-    
+    // BUG-02 FIX: guard muted + ctx at the very top before any node creation
+    if (!this.ctx || this.isMuted) return;
+
     // Resume context if suspended (browser autoplay policy)
     if (this.ctx.state === "suspended") this.ctx.resume();
 
@@ -61,18 +62,24 @@ class AudioManager {
     gain.gain.linearRampToValueAtTime(0.1, this.ctx.currentTime + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
 
-    if (this.isMuted) return;
-
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.masterGain!);
 
     osc.start();
     osc.stop(this.ctx.currentTime + 0.1);
+
+    // BUG-01 FIX: disconnect all nodes after playback to prevent memory leak
+    osc.onended = () => {
+      osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   public playClick() {
-    if (!this.ctx) return;
+    // BUG-02 FIX: guard muted + ctx at the very top before any node creation
+    if (!this.ctx || this.isMuted) return;
     if (this.ctx.state === "suspended") this.ctx.resume();
 
     const osc = this.ctx.createOscillator();
@@ -86,13 +93,17 @@ class AudioManager {
     gain.gain.linearRampToValueAtTime(0.15, this.ctx.currentTime + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
 
-    if (this.isMuted) return;
-
     osc.connect(gain);
     gain.connect(this.masterGain!);
 
     osc.start();
     osc.stop(this.ctx.currentTime + 0.15);
+
+    // BUG-01 FIX: disconnect all nodes after playback to prevent memory leak
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
   }
 
   public startAmbient() {

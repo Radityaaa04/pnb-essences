@@ -84,15 +84,21 @@ export default function HeroBottle({
 
   const roughnessMap = useTexture("/textures/kaca_luar_roughness_map.jpg");
 
-  // ── Build materials + inject liquid shader imperatively ──────────────────
-  // useMemo ensures materials are created once and NOT recreated on re-renders.
-  const clonedScene = useMemo(() => {
-    const clone = scene.clone();
-
+  // BUG-07 FIX: Configure roughnessMap in a useEffect (not inside useMemo).
+  // Side effects in useMemo are forbidden — React may call useMemo multiple
+  // times in Strict Mode / Fast Refresh, causing flicker or material rebuilds.
+  useEffect(() => {
     roughnessMap.flipY = false;
     roughnessMap.colorSpace = THREE.NoColorSpace;
     roughnessMap.wrapS = THREE.RepeatWrapping;
     roughnessMap.wrapT = THREE.RepeatWrapping;
+    roughnessMap.needsUpdate = true;
+  }, [roughnessMap]);
+
+  // ── Build materials + inject liquid shader imperatively ──────────────────
+  // useMemo ensures materials are created once and NOT recreated on re-renders.
+  const clonedScene = useMemo(() => {
+    const clone = scene.clone();
 
     const applyMat = (objName: string, mat: THREE.Material) => {
       const obj = clone.getObjectByName(objName);

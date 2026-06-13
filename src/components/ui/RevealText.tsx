@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useLayoutEffect } from "react";
 import gsap from "gsap";
 import { SplitText } from "gsap/SplitText";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -29,7 +29,10 @@ export default function RevealText({
 
   const isEntered = useStore((state) => state.isEntered);
 
-  useEffect(() => {
+  // BUG-06 FIX: useLayoutEffect instead of useEffect so SplitText reads
+  // accurate post-paint dimensions, preventing race condition when children
+  // change (split.revert() + new SplitText() on same tick).
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     

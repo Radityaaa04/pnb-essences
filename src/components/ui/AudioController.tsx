@@ -25,7 +25,9 @@ export default function AudioController() {
       window.removeEventListener("touchstart", handleFirstInteraction);
     };
 
-    window.addEventListener("click", handleFirstInteraction);
+    // BUG-08 FIX: use { once: true } for click, same as scroll and touchstart,
+    // so the listener self-removes after first interaction without manual cleanup.
+    window.addEventListener("click", handleFirstInteraction, { once: true });
     window.addEventListener("scroll", handleFirstInteraction, { once: true });
     window.addEventListener("touchstart", handleFirstInteraction, { once: true });
 

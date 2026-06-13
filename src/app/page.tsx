@@ -7,7 +7,6 @@ import VelocitySkew from "@/components/ui/VelocitySkew";
 import Parallax from "@/components/ui/Parallax";
 import { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
-import { audioManager } from "@/lib/audioManager";
 
 export default function Home() {
   const triggerBurst = useStore((state) => state.triggerBurst);
@@ -98,7 +97,6 @@ export default function Home() {
           <div 
             className="relative inline-block p-8 group cursor-pointer" 
             data-cursor="hover"
-            onMouseEnter={() => audioManager.playHover()}
           >
             {/* Corner marks — replaces cheap border */}
             <span className="absolute top-0 left-0 w-4 h-4 border-t border-l border-white/30 group-hover:border-white/70 transition-colors duration-500" />
@@ -147,7 +145,6 @@ export default function Home() {
                 <div
                   className="group flex flex-col items-start p-8 relative cursor-pointer transition-all duration-700 hover:bg-white/[0.03]"
                   data-cursor="hover"
-                  onMouseEnter={() => audioManager.playHover()}
                 >
                   {/* Corner marks on hover */}
                   <span className="absolute top-0 left-0 w-4 h-4 border-t border-l border-transparent group-hover:border-white/20 transition-all duration-500" />
@@ -240,7 +237,6 @@ export default function Home() {
               href="mailto:vault@pnbessences.com"
               className="group relative font-[family-name:var(--font-geist-mono)] text-xs tracking-[0.4em] opacity-60 hover:opacity-100 transition-opacity duration-500 p-6 inline-block uppercase"
               data-cursor="hover"
-              onMouseEnter={() => audioManager.playHover()}
             >
               vault@pnbessences.com
               {/* Animated underline */}
