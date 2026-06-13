@@ -295,7 +295,7 @@ export default function HeroBottle({
 
       {/* GPU Sparkles — replaces the 120-particle CPU shader */}
       <Sparkles
-        count={300}
+        count={150}
         scale={5}
         size={2.0}
         speed={0.3}

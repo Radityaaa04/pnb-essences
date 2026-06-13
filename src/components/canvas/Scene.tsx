@@ -72,6 +72,7 @@ export default function Scene() {
   return (
     <div className="fixed inset-0 z-0 pointer-events-none">
       <Canvas
+        dpr={[1, 1.5]}
         camera={{ position: [0, 0, 8], fov: 45 }}
         gl={{
           antialias: false,
@@ -119,11 +120,6 @@ export default function Scene() {
         >
           <Bloom luminanceThreshold={2.0} mipmapBlur intensity={0.8} />
           <ReactiveAberration />
-          {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore postprocessing v3 JSX types incompatible with React 19
-          }
-          <Noise opacity={0.06} />
           {
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore postprocessing v3 JSX types incompatible with React 19

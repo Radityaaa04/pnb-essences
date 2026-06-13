@@ -64,7 +64,7 @@ export default function RootLayout({
         <Preloader />
         <CustomCursor />
         <SmoothScroll>
-          <div className="fixed inset-0 z-50 pointer-events-none opacity-[0.04] mix-blend-difference film-grain"></div>
+          <div className="fixed inset-0 z-50 pointer-events-none opacity-[0.04] film-grain"></div>
           <SceneWrapper />
           <div className="relative z-10">{children}</div>
         </SmoothScroll>
