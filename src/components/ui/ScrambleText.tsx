@@ -7,13 +7,15 @@ interface ScrambleTextProps {
   text: string;
   className?: string;
   delay?: number; // ms to wait after global enter
+  trigger?: boolean; // optional manual trigger
 }
 
-const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
+const CHARS = "0123456789—_+";
 
-export default function ScrambleText({ text, className, delay = 0 }: ScrambleTextProps) {
+export default function ScrambleText({ text, className, delay = 0, trigger }: ScrambleTextProps) {
   const [displayText, setDisplayText] = useState("");
-  const isEntered = useStore((state) => state.isEntered);
+  const globalIsEntered = useStore((state) => state.isEntered);
+  const isEntered = trigger !== undefined ? trigger : globalIsEntered;
   const frameRef = useRef<number | null>(null);
   const queueRef = useRef<{ from: string; to: string; start: number; end: number; char?: string }[]>([]);
   const frameCountRef = useRef(0);
@@ -44,8 +46,8 @@ export default function ScrambleText({ text, className, delay = 0 }: ScrambleTex
           queueRef.current.push({ from: " ", to: " ", start: 0, end: 0 });
           continue;
         }
-        const start = Math.floor(Math.random() * 40);
-        const end = start + Math.floor(Math.random() * 40);
+        const start = Math.floor(Math.random() * 60);
+        const end = start + Math.floor(Math.random() * 60);
         queueRef.current.push({ from, to, start, end });
         length = Math.max(length, end);
       }

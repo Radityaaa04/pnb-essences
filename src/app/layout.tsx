@@ -5,6 +5,8 @@ import SmoothScroll from "@/components/layout/SmoothScroll";
 import SceneWrapper from "@/components/canvas/SceneWrapper";
 import CustomCursor from "@/components/ui/CustomCursor";
 import Preloader from "@/components/ui/Preloader";
+import Navigation from "@/components/layout/Navigation";
+import TransitionProvider from "@/components/layout/TransitionProvider";
 
 // Cormorant Garamond: ultra-sharp hairline serifs, ultra-high contrast — the
 // signature of Bottega Veneta, Loewe, and high-end fragrance maisons.
@@ -63,10 +65,18 @@ export default function RootLayout({
         <AudioController />
         <Preloader />
         <CustomCursor />
+        {/* Navigation — fixed, outside SmoothScroll so it stays anchored.
+            viewTransitionName='site-nav' in the component keeps it stable
+            during CSS ViewTransition page animations. */}
+        <Navigation />
         <SmoothScroll>
           <div className="fixed inset-0 z-50 pointer-events-none opacity-[0.04] film-grain"></div>
           <SceneWrapper />
-          <div className="relative z-10">{children}</div>
+          {/* TransitionProvider renders DossierOverlay when transitionActive=true
+              and handles router.push() after the animation completes. */}
+          <TransitionProvider>
+            <div className="relative z-10">{children}</div>
+          </TransitionProvider>
         </SmoothScroll>
       </body>
     </html>

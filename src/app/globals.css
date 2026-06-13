@@ -70,3 +70,53 @@ html.lenis, html.lenis body {
 .film-grain {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
+
+/* ─── CSS View Transition API ──────────────────────────────────────────────
+ * The DossierOverlay handles the EXIT animation (it covers the old page).
+ * The CSS ::view-transition-* rules here handle the ENTER animation —
+ * the new page rising in after the overlay fades out.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Suppress the default cross-fade on the outgoing snapshot — the
+   DossierOverlay fullscreen div is already doing this job. */
+::view-transition-old(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* New page: subtle fade + rise from below */
+::view-transition-new(root) {
+  animation: page-enter 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Navigation bar: keep it completely stable — it must not animate with the
+   page content. viewTransitionName="site-nav" is set on the <nav> element. */
+::view-transition-group(site-nav) {
+  animation-duration: 0s;
+  z-index: 9990;
+}
+::view-transition-old(site-nav),
+::view-transition-new(site-nav) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Respect reduced-motion preferences — instant transition, no animation */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+

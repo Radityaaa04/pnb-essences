@@ -52,7 +52,7 @@ export default function Magnetic({ children, intensity = 0.2 }: MagneticProps) {
   // Wrap children in a div so we can attach the ref without cloneElement
   // (React 19 removed ref from cloneElement props)
   return (
-    <div ref={wrapperRef} style={{ display: "contents" }}>
+    <div ref={wrapperRef} style={{ display: "inline-block" }}>
       {children}
     </div>
   );

@@ -3,19 +3,31 @@
 
 import * as THREE from "three";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Environment, ContactShadows } from "@react-three/drei";
+import { Environment, ContactShadows, PerformanceMonitor, AdaptiveDpr } from "@react-three/drei";
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import HeroBottle from "./HeroBottle";
-import { useRef, useEffect, useMemo } from "react";
+import SillageTrail from "./SillageTrail";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { scrollVelocity } from "@/lib/velocity";
 import { useStore } from "@/lib/store";
 
 // Lives inside Canvas so it can use R3F hooks; tracks mouse via window
 // so pointer-events-none on the container div stays intact for scrolling.
 function SceneContent() {
-  const mouse = useRef({ x: 0, y: 0 });
+  const mouse     = useRef({ x: 0, y: 0 });
+  // bottlePos is written each frame by HeroBottle and read by SillageTrail.
+  // Using a plain object (not THREE.Vector3) to avoid circular-ref SSR issues.
+  // HeroBottle and SillageTrail only call .copy() / .x .y .z — compatible.
+  const bottlePos = useRef({ x: 0, y: -1, z: 0 } as unknown as THREE.Vector3);
+
+  // Mobile/touch device guard — disable particle system on low-power GPUs.
+  // Checks both screen width and touch capability for reliability.
+  const isMobile = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 768 || navigator.maxTouchPoints > 0;
+  }, []);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -26,15 +38,26 @@ function SceneContent() {
     return () => window.removeEventListener("mousemove", onMove);
   }, []);
 
-  return <HeroBottle mouse={mouse} scale={1.5} position={[0, -1, 0]} />;
+  return (
+    <>
+      <HeroBottle mouse={mouse} bottlePos={bottlePos} scale={1.5} position={[0, -1, 0]} />
+      {/* Sillage Trail: GPU particle system — disabled on mobile/touch devices */}
+      {!isMobile && <SillageTrail mouse={mouse} bottlePos={bottlePos} />}
+    </>
+  );
 }
 
 // Shader Hooking: Tie chromatic aberration intensity to scroll velocity and burst effect
 function ReactiveAberration() {
   const effectRef = useRef<any>(null);
   
-  // Stable offset vector created once per component lifecycle
-  const aberrationOffset = useMemo(() => new THREE.Vector2(0.0008, 0.0008), []);
+  // useRef (not useMemo) — Three.js objects have circular refs that
+  // cause JSON.stringify errors in Next.js SSR. useRef is SSR-safe.
+  const aberrationOffset = useRef<THREE.Vector2 | null>(null);
+  if (aberrationOffset.current === null) {
+    // Lazy init: only creates THREE.Vector2 when actually rendering (client-side)
+    aberrationOffset.current = new THREE.Vector2(0.0008, 0.0008);
+  }
 
   useFrame(() => {
     if (effectRef.current) {
@@ -63,16 +86,23 @@ function ReactiveAberration() {
     <ChromaticAberration
       ref={effectRef}
       blendFunction={BlendFunction.NORMAL}
-      offset={aberrationOffset}
+      offset={aberrationOffset.current!}
     />
   );
 }
 
 export default function Scene() {
+  const [dpr, setDpr] = useState(1.5);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    setIsMobile(window.innerWidth < 768 || navigator.maxTouchPoints > 0);
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-0 pointer-events-none">
+    <div className="fixed inset-0 z-0 pointer-events-none" aria-hidden="true">
       <Canvas
-        dpr={[1, 1.5]}
+        dpr={[1, dpr]}
         camera={{ position: [0, 0, 8], fov: 45 }}
         gl={{
           antialias: false,
@@ -81,6 +111,9 @@ export default function Scene() {
           powerPreference: "high-performance",
         }}
       >
+        <PerformanceMonitor onDecline={() => setDpr(1)} />
+        <AdaptiveDpr pixelated />
+
         <ambientLight intensity={0.1} />
         {/* Key Light — dari atas kanan, memotong sisi kaca dengan highlight yang elegan */}
         <spotLight position={[5, 8, 5]} angle={0.2} penumbra={0.8} intensity={0.8} />
@@ -102,6 +135,8 @@ export default function Scene() {
           blur={2.5}
           far={4}
           color="#000000"
+          resolution={256}
+          frames={1}
         />
 
         {/* Environment: city HDRI gives complex multi-angle reflections
@@ -110,22 +145,25 @@ export default function Scene() {
           preset="city"
           environmentIntensity={0.5}
           background={false}
+          resolution={256}
         />
 
-        {/* Post-Processing Pipeline */}
-        <EffectComposer
-          disableNormalPass
-          multisampling={0}
-          frameBufferType={THREE.HalfFloatType}
-        >
-          <Bloom luminanceThreshold={2.0} mipmapBlur intensity={0.8} />
-          <ReactiveAberration />
-          {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore postprocessing v3 JSX types incompatible with React 19
-          }
-          <Vignette eskil={false} offset={0.3} darkness={0.9} />
-        </EffectComposer>
+        {/* Post-Processing Pipeline - Disabled on Mobile for Performance */}
+        {!isMobile && (
+          <EffectComposer
+            disableNormalPass
+            multisampling={0}
+            frameBufferType={THREE.HalfFloatType}
+          >
+            <Bloom luminanceThreshold={2.0} mipmapBlur intensity={0.8} />
+            <ReactiveAberration />
+            {
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore postprocessing v3 JSX types incompatible with React 19
+            }
+            <Vignette eskil={false} offset={0.3} darkness={0.9} />
+          </EffectComposer>
+        )}
       </Canvas>
     </div>
   );

@@ -6,10 +6,8 @@ import { useGLTF, useTexture, Sparkles } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { GLTF } from "three-stdlib";
 import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useStore } from "@/lib/store";
-
-gsap.registerPlugin(ScrollTrigger);
+import { usePathname } from "next/navigation";
 
 // ─── Caustics floor glow ─────────────────────────────────────────────────────
 const CausticsGlow = () => {
@@ -47,6 +45,8 @@ const CausticsGlow = () => {
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface HeroBottleProps {
   mouse: React.MutableRefObject<{ x: number; y: number }>;
+  /** Shared ref — SillageTrail reads this to know where to emit particles (plain object) */
+  bottlePos?: React.MutableRefObject<{ x: number; y: number; z: number }>;
   scale?: number;
   position?: [number, number, number];
 }
@@ -59,13 +59,23 @@ type GLTFResult = GLTF & {
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function HeroBottle({
   mouse,
+  bottlePos,
   scale = 15,
   position = [0, -1, 0],
 }: HeroBottleProps) {
+  const pathname = usePathname();
   const group       = useRef<THREE.Group>(null);
   const bottleGroup = useRef<THREE.Group>(null);
   const liquidMatRef  = useRef<THREE.MeshPhysicalMaterial | null>(null);
   const liquidShader  = useRef<any>(null);
+
+  // ── [NEW] Chromatic Resonance refs ────────────────────────────────────────
+  // glassShader: captured in onBeforeCompile, updated each frame
+  // smoothResonance: lerped value [0→1] driven by mouse↔bottle proximity
+  // projVec: scratch Vector3 for projecting bottle pos to NDC each frame
+  const glassShader     = useRef<any>(null);
+  const smoothResonance = useRef(0);
+  const projVec         = useRef(new THREE.Vector3());
 
   // ── Color-morph palette ───────────────────────────────────────────────────
   const COLOR_AMBER       = useMemo(() => new THREE.Color("#d18800"), []);
@@ -78,15 +88,10 @@ export default function HeroBottle({
   const _tmpColorAtt = useMemo(() => new THREE.Color(), []);
 
   // ── Load GLB — keep original scene graph intact via cloning ──────────────
-  // We use scene.clone() so all parent→child transforms are preserved,
-  // which avoids the "floating pump" bug caused by extracting local transforms.
   const { scene } = useGLTF("/models/hero-v3-draco.glb") as unknown as GLTFResult;
-
   const roughnessMap = useTexture("/textures/kaca_luar_roughness_map.jpg");
 
-  // BUG-07 FIX: Configure roughnessMap in a useEffect (not inside useMemo).
-  // Side effects in useMemo are forbidden — React may call useMemo multiple
-  // times in Strict Mode / Fast Refresh, causing flicker or material rebuilds.
+  // BUG-07 FIX: configure roughnessMap in useEffect (not useMemo)
   useEffect(() => {
     roughnessMap.flipY = false;
     roughnessMap.colorSpace = THREE.NoColorSpace;
@@ -95,8 +100,7 @@ export default function HeroBottle({
     roughnessMap.needsUpdate = true;
   }, [roughnessMap]);
 
-  // ── Build materials + inject liquid shader imperatively ──────────────────
-  // useMemo ensures materials are created once and NOT recreated on re-renders.
+  // ── Build materials + inject shaders imperatively ─────────────────────────
   const clonedScene = useMemo(() => {
     const clone = scene.clone();
 
@@ -111,25 +115,90 @@ export default function HeroBottle({
       });
     };
 
-    // 1. Kaca Luar — premium glass (MeshPhysical is better than Transmission
-    //    for a black-background scene; Transmission would just refract black)
-    applyMat("kaca_luar", new THREE.MeshPhysicalMaterial({
-      color:              new THREE.Color("#ffffff"),
-      transmission:       1.0,
-      thickness:          1.5,
-      roughness:          0.05,
+    // ── 1. Kaca Luar — CHROMATIC RESONANCE glass ──────────────────────────
+    // onBeforeCompile injects two GLSL effects driven by mouse proximity:
+    //   • Vertex: Fourier standing wave displacement (physical ripple on glass)
+    //   • Fragment: Thin-film iridescent interference (rainbow spectral bands)
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color:               new THREE.Color("#ffffff"),
+      transmission:        1.0,
+      thickness:           1.5,
+      roughness:           0.05,
       roughnessMap,
-      ior:                1.5,
-      reflectivity:       0.25,   // was 0.8 — too white, now truly transparent
-      clearcoat:          0.2,    // was 1.0 — less mirror-like surface bloom
-      clearcoatRoughness: 0.15,   // slight diffusion on clearcoat layer
-      attenuationColor:   new THREE.Color("#e8f0f5"),
-      attenuationDistance: 8.0,   // larger distance = more transparency
-      transparent:        true,
-      side:               THREE.DoubleSide,
-    }));
+      ior:                 1.5,
+      reflectivity:        0.25,
+      clearcoat:           0.2,
+      clearcoatRoughness:  0.15,
+      attenuationColor:    new THREE.Color("#e8f0f5"),
+      attenuationDistance: 8.0,
+      transparent:         true,
+      side:                THREE.DoubleSide,
+    });
 
-    // 2. Pipet — clear plastic
+    glassMat.onBeforeCompile = (shader) => {
+      // Inject custom uniforms — updated every frame in useFrame
+      shader.uniforms.uTime      = { value: 0 };
+      shader.uniforms.uResonance = { value: 0 };
+      glassShader.current = shader;
+
+      // ── Vertex: Fourier standing wave displacement ──────────────────────
+      // Three harmonics at irrational-ratio frequencies create a non-repeating
+      // standing wave pattern. Displacement is along objectNormal (surface normal
+      // in local space), so it ripples the glass geometry outward/inward.
+      shader.vertexShader = `uniform float uTime;\nuniform float uResonance;\n${shader.vertexShader}`;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        `
+        #include <begin_vertex>
+        // Fourier harmonics: frequencies chosen to avoid periodicity
+        float gw1 = sin(position.y *  8.0 + uTime * 2.5) * 0.022;
+        float gw2 = sin(position.x * 13.0 - uTime * 1.8) * 0.014;
+        float gw3 = sin(position.z *  5.0 + uTime * 3.1) * 0.018;
+        // normal attribute is the raw per-vertex normal in local space
+        transformed += normalize(normal) * (gw1 + gw2 + gw3) * uResonance;
+        `
+      );
+
+      // ── Fragment: thin-film iridescent interference ─────────────────────
+      // vWorldPosition is available because USE_TRANSMISSION is defined
+      // (transmission: 1.0 on the material).
+      // We use three non-harmonic oscillators to produce an aperiodic rainbow:
+      //   freq 1.000 — fundamental
+      //   freq 1.618 — golden ratio (φ) — avoids octave repetition
+      //   freq 2.414 — silver ratio (1+√2) — avoids harmonic repetition
+      // A secondary X-axis wave creates a 2D interference grid.
+      shader.fragmentShader = `uniform float uTime;\nuniform float uResonance;\n${shader.fragmentShader}`;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <tonemapping_fragment>",
+        `
+        // ── Thin-film spectral interference ─────────────────────────────
+        float phaseY = vWorldPosition.y * 7.0 + uTime * 0.8;
+        float ri = sin(phaseY * 1.000) * 0.5 + 0.5;
+        float gi = sin(phaseY * 1.618) * 0.5 + 0.5;  // φ
+        float bi = sin(phaseY * 2.414) * 0.5 + 0.5;  // silver ratio
+
+        // Transverse X-wave creates 2D interference pattern
+        float phaseX = vWorldPosition.x * 5.0 - uTime * 0.6;
+        ri *= sin(phaseX * 0.793) * 0.5 + 0.5;
+        gi *= sin(phaseX * 1.000) * 0.5 + 0.5;
+        bi *= sin(phaseX * 1.272) * 0.5 + 0.5;
+
+        // Quadratic resonance gives a dramatic "snap" into iridescence —
+        // stays subtle until cursor is very close, then blazes.
+        float iridStrength = uResonance * uResonance * 0.90;
+        gl_FragColor.rgb   = mix(
+          gl_FragColor.rgb,
+          gl_FragColor.rgb + vec3(ri, gi, bi) * 0.70,
+          iridStrength
+        );
+        #include <tonemapping_fragment>
+        `
+      );
+    };
+
+    applyMat("kaca_luar", glassMat);
+
+    // ── 2. Pipet — clear plastic ───────────────────────────────────────────
     applyMat("tabung_pipet", new THREE.MeshPhysicalMaterial({
       color:        new THREE.Color("#ffffff"),
       transmission: 0.9,
@@ -140,18 +209,18 @@ export default function HeroBottle({
       thickness:    0.1,
     }));
 
-    // 3. Cairan — golden amber liquid with GLSL fluid dynamics
+    // ── 3. Cairan — golden amber liquid with GLSL fluid dynamics ──────────
     const liquidMat = new THREE.MeshPhysicalMaterial({
-      color:              new THREE.Color("#d18800"),
-      roughness:          0.15,
-      metalness:          0.1,
-      transmission:       0.9,
-      transparent:        true,
-      ior:                1.33,
-      thickness:          2.0,
-      attenuationColor:   new THREE.Color("#e89517"),
+      color:               new THREE.Color("#d18800"),
+      roughness:           0.15,
+      metalness:           0.1,
+      transmission:        0.9,
+      transparent:         true,
+      ior:                 1.33,
+      thickness:           2.0,
+      attenuationColor:    new THREE.Color("#e89517"),
       attenuationDistance: 1.5,
-      side:               THREE.DoubleSide,
+      side:                THREE.DoubleSide,
     });
 
     liquidMat.onBeforeCompile = (shader) => {
@@ -181,33 +250,27 @@ export default function HeroBottle({
     liquidMatRef.current = liquidMat;
     applyMat("cairan_dalam", liquidMat);
 
-    // 4. Tutup — pitch-black titanium
+    // ── 4. Tutup — pitch-black titanium ───────────────────────────────────
     applyMat("tutup_botol", new THREE.MeshStandardMaterial({
       color:     new THREE.Color("#050505"),
       roughness: 0.25,
       metalness: 1.0,
     }));
 
-    // 5. Pompa — HIDDEN
-    // The AI-generated model has a sphere as the pump head which looks like
-    // a floating gray ball above the cap. No material fix works — hide it.
+    // ── 5. Hide pump + pipet (model artifacts) ────────────────────────────
     const pumpObj = clone.getObjectByName("mekanisme_pompa");
-    if (pumpObj) {
-      pumpObj.visible = false;
-    }
+    if (pumpObj) pumpObj.visible = false;
 
-    // Also hide tabung_pipet if it's adding visual noise as a float frame
     const pipetObj = clone.getObjectByName("tabung_pipet");
     if (pipetObj) {
       pipetObj.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          (child as THREE.Mesh).visible = false;
-        }
+        if ((child as THREE.Mesh).isMesh) (child as THREE.Mesh).visible = false;
       });
     }
 
     return clone;
-  }, [scene, roughnessMap]);
+  }, [scene, roughnessMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  // glassShader and liquidShader are refs — excluded intentionally
 
   // ── Animation state ───────────────────────────────────────────────────────
   const scrollData = useRef({
@@ -217,6 +280,14 @@ export default function HeroBottle({
   const elapsedTime    = useRef(0);
   const lastScrollY    = useRef(0);
   const smoothVelocity = useRef(0);
+  const scrollTl       = useRef<gsap.core.Timeline | null>(null);
+
+  const prefersReducedMotion = useMemo(() => {
+    if (typeof window !== "undefined") {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+    return false;
+  }, []);
 
   const isEntered = useStore((state) => state.isEntered);
 
@@ -228,19 +299,25 @@ export default function HeroBottle({
     }
     gsap.to(sd, { yOffset: 0, scaleOffset: 1, yRotOffset: 0, duration: 2.5, ease: "power3.out" });
 
-    const tl = gsap.timeline({
-      scrollTrigger: { trigger: "#hero", start: "top top", endTrigger: "body", end: "bottom bottom", scrub: 0.5 },
-    });
+    // Create a paused timeline that we'll scrub manually via scrollProgress
+    const tl = gsap.timeline({ paused: true });
 
-    tl.to(sd, { xOffset: 3.0,  yOffset: -0.3, yRotOffset: Math.PI * 0.3, scaleOffset: 1.0,  colorProgress: 0.5, ease: "power2.inOut" });
-    tl.to(sd, { xOffset: 0,    yOffset: -0.8, yRotOffset: Math.PI * 4,   scaleOffset: 0.35, colorProgress: 1.0, ease: "power2.inOut" });
-    tl.to(sd, { yOffset: 12,               yRotOffset: Math.PI * 4.5, scaleOffset: 0,                        ease: "power2.in" });
+    // FIX: Use fromTo for the first step so we don't capture the yOffset=5 from the intro animation!
+    tl.fromTo(sd, 
+      { xOffset: 0, yOffset: 0, yRotOffset: 0, scaleOffset: 1.0, colorProgress: 0 },
+      { xOffset: 3.0, yOffset: -0.3, yRotOffset: Math.PI * 0.3, scaleOffset: 1.0, colorProgress: 0.5, ease: "power2.inOut", duration: 0.5 }, 
+      0
+    );
+    tl.to(sd, { xOffset: 0,    yOffset: -0.8, yRotOffset: Math.PI * 4,   scaleOffset: 0.35, colorProgress: 1.0, ease: "power2.inOut", duration: 0.3 }, 0.5);
+    tl.to(sd, { yOffset: 12,                  yRotOffset: Math.PI * 4.5, scaleOffset: 0,                        ease: "power2.in", duration: 0.2 }, 0.8);
 
-    return () => { tl.scrollTrigger?.kill(); tl.kill(); };
+    scrollTl.current = tl;
+
+    return () => { tl.kill(); };
   }, [isEntered]);
 
   // ── Per-frame updates ─────────────────────────────────────────────────────
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     if (!group.current || !bottleGroup.current) return;
     const sd = scrollData.current;
 
@@ -253,9 +330,41 @@ export default function HeroBottle({
     lastScrollY.current = curY;
     smoothVelocity.current = smoothVelocity.current * 0.9 + raw * 0.1;
 
+    // Liquid shader uniforms
     if (liquidShader.current) {
       liquidShader.current.uniforms.uTime.value           = elapsedTime.current;
       liquidShader.current.uniforms.uScrollVelocity.value = smoothVelocity.current;
+    }
+
+    // ── [NEW] Chromatic Resonance: mouse proximity + Cinematic Scroll ────
+    // Combine mouse proximity resonance with scroll-driven narrative resonance
+    if (glassShader.current) {
+      projVec.current.copy(group.current.position).project(state.camera);
+      const dx   = mouse.current.x - projVec.current.x;
+      const dy   = mouse.current.y - projVec.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const t        = Math.min(1.0, dist / 1.2);
+      const smooth   = t * t * (3.0 - 2.0 * t);
+      
+      // Mouse interaction target
+      let target = 1.0 - smooth;
+
+      // Add cinematic scroll resonance
+      // Peak resonance at progress 0.3 to 0.6 (The Transmission phase)
+      const p = useStore.getState().scrollProgress;
+      if (scrollTl.current && p > 0) {
+        scrollTl.current.progress(p);
+      }
+
+      if (p > 0.15 && p < 0.7) {
+        // Bell curve peaking at 0.425
+        const cinematic = Math.sin((p - 0.15) / 0.55 * Math.PI);
+        target = Math.max(target, cinematic * 1.5); // Cinematic resonance is stronger
+      }
+
+      smoothResonance.current += (target - smoothResonance.current) * 0.04;
+      glassShader.current.uniforms.uTime.value      = elapsedTime.current;
+      glassShader.current.uniforms.uResonance.value = smoothResonance.current;
     }
 
     // Mouse parallax
@@ -277,23 +386,28 @@ export default function HeroBottle({
     }
 
     group.current.position.x = position[0] + sd.xOffset;
-    group.current.position.y = position[1] + sd.yOffset + Math.sin(elapsedTime.current * 0.8) * 0.15;
+    group.current.position.y = position[1] + sd.yOffset + (prefersReducedMotion ? 0 : Math.sin(elapsedTime.current * 0.8) * 0.15);
     const s = scale * sd.scaleOffset;
     group.current.scale.set(s, s, s);
 
-    bottleGroup.current.rotation.y = sd.yRotOffset + smoothMouse.current.x * 0.35;
-    bottleGroup.current.rotation.x = smoothMouse.current.y * 0.15;
+    bottleGroup.current.rotation.y = sd.yRotOffset + (prefersReducedMotion ? 0 : smoothMouse.current.x * 0.35);
+    bottleGroup.current.rotation.x = prefersReducedMotion ? 0 : smoothMouse.current.y * 0.15;
+
+    // ── [NEW] Share bottle world position for SillageTrail ────────────────
+    if (bottlePos && group.current) {
+      // Plain object assignment — compatible with { x, y, z } plain ref
+      bottlePos.current.x = group.current.position.x;
+      bottlePos.current.y = group.current.position.y;
+      bottlePos.current.z = group.current.position.z;
+    }
   });
 
   return (
-    <group ref={group}>
+    <group ref={group} visible={pathname === "/"}>
       <group ref={bottleGroup}>
-        {/* scene.clone() preserves the full parent→child hierarchy, fixing
-            the "floating pump" transform bug that individual node extraction caused */}
         <primitive object={clonedScene} />
       </group>
 
-      {/* GPU Sparkles — replaces the 120-particle CPU shader */}
       <Sparkles
         count={150}
         scale={5}

@@ -66,7 +66,12 @@ export default function Preloader() {
       <div className="flex flex-col items-center space-y-8 z-10">
         <h1 className="text-xs uppercase tracking-[0.5em] text-gray-500">PNB ESSENCES / LAB</h1>
         
-        <div className="text-5xl md:text-7xl font-light tabular-nums tracking-tighter">
+        <div 
+          className="text-5xl md:text-7xl font-light tabular-nums tracking-tighter"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label={`Loading experience, ${Math.round(progress)}% complete`}
+        >
           {Math.round(progress)}%
         </div>
 
@@ -74,8 +79,9 @@ export default function Preloader() {
           {ready ? (
             <button
               onClick={handleEnter}
-              className="px-6 py-2 text-xs border border-white/20 hover:border-white/60 hover:bg-white/10 uppercase tracking-[0.2em] transition-all duration-300"
+              className="px-6 py-2 text-xs border border-white/20 hover:border-white/60 hover:bg-white/10 uppercase tracking-[0.2em] transition-all duration-300 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
               data-cursor="hover"
+              aria-label="Enter the PNB Essences laboratory experience"
             >
               [ INITIATE SEQUENCE ]
             </button>
